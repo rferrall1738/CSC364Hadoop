@@ -4,9 +4,10 @@ import java.io.IOException;
 import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.io.*;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Mapper;
-import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 
 public class ReviewMapper extends Mapper<LongWritable, Text, Text, PairWritable> {
     public enum COUNTERS {HEADER, CORRUPT, RECORDS, FILTERED}
@@ -33,19 +34,21 @@ public class ReviewMapper extends Mapper<LongWritable, Text, Text, PairWritable>
         String line = value.toString();
         if (line.isEmpty()) return;
 
-        FileSplit split = (FileSplit) context.getInputSplit();
-        if (split.getStart() == 0) {
-            String lower = line.toLowerCase();
-
-            if (lower.contains("language") || lower.contains("voted") || lower.contains("early")) {
-                context.getCounter(COUNTERS.HEADER).increment(1);
-                return;
-            }
+        String lower = line.toLowerCase();
+        if (lower.startsWith("recommendedid") || (lower.contains("language") && lower.contains("voted"))) {
+            context.getCounter(COUNTERS.HEADER).increment(1);
+            return;
         }
 
         try {
-            String fileName = split.getPath().getName();
-            String base = fileName;
+            String filePath = context.getConfiguration().get("mapreduce.map.input.file");
+            if (filePath == null) {
+                filePath = context.getConfiguration().get("map.input.file");
+            }
+
+            String base = (filePath != null) ? new Path(filePath).getName()
+                    : "UNKNOWN_APPID";
+
             if (base.endsWith(".gz"))  base = base.substring(0, base.length() - 3);
             if (base.endsWith(".csv")) base = base.substring(0, base.length() - 4);
             String appid = base;
@@ -58,22 +61,24 @@ public class ReviewMapper extends Mapper<LongWritable, Text, Text, PairWritable>
             }
 
             String language = columns.get(langIdx).trim().toLowerCase();
-            String isEarlyAccess = columns.get(earlyIdx).trim().toLowerCase();
+            String earlyStr = columns.get(earlyIdx).trim().toLowerCase();
+            boolean isEarly = earlyStr.equals("true") || earlyStr.equals("1") || earlyStr.equals("yes");
 
-            boolean early = isEarlyAccess.equals("true") || isEarlyAccess.equals("1") || isEarlyAccess.equals("yes");
-            if (!language.equals(langKeep) || early) {
+            //english and not early reviews are good
+            if (!language.equals(langKeep) || isEarly) {
                 context.getCounter(COUNTERS.FILTERED).increment(1);
                 return;
             }
 
-            String upVoted = columns.get(votedUpIdx).trim().toLowerCase();
-            boolean isUpVoted = upVoted.equals("true") || upVoted.equals("1") || upVoted.equals("yes");
+            String up = columns.get(votedUpIdx).trim().toLowerCase();
+            boolean isUpVoted = up.equals("true") || up.equals("1") || up.equals("yes");
 
             output.set(appid);
             outPair.setPositive(isUpVoted ? 1 : 0, 1);
             context.write(output, outPair);
             context.getCounter(COUNTERS.RECORDS).increment(1);
-        } catch (Exception e){
+
+        } catch (Exception e) {
             context.getCounter(COUNTERS.CORRUPT).increment(1);
         }
     }
