@@ -12,11 +12,15 @@ public class ReviewReducer extends Reducer<Text, PairWritable, Text, Text> {
             throws IOException, InterruptedException {
         long positive = 0;
         long total = 0;
+
         for (PairWritable value : values) {
             positive += value.getPositive();
             total += value.getTotal();
         }
-        outValue.set(positive + "\t" + total);
+
+        double ratio = 0.0;
+        if (total > 0) ratio = positive / (double) total;
+        outValue.set(positive + "\t" + total +"\t" +ratio);
         context.write(key, outValue);
     }
 }
